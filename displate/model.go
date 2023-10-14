@@ -1,9 +1,9 @@
-package displateApi
+package displate
 
-import (
-	"encoding/json"
-	"io"
-	"net/http"
+const (
+	StatusAvailable = "active"
+	StatusSoldOut   = "sold_out"
+	StatusUpcoming  = "upcoming"
 )
 
 type LimitedEditionResponse struct {
@@ -35,33 +35,13 @@ type Displate struct {
 	Images           Images  `json:"images"`
 }
 
-type Fetcher interface {
-	GetLimitedEditionDisplates() ([]Displate, error)
-}
-
-type apiClient struct {
-}
-
-func NewFetcher() Fetcher {
-	return &apiClient{}
-}
-
-func (c *apiClient) GetLimitedEditionDisplates() ([]Displate, error) {
-	response, err := http.Get("https://sapi.displate.com/artworks/limited?miso=DE")
-	if err != nil {
-		return nil, err
+func FilterDisplates(displates []Displate, filterFunc func(displate Displate) bool) []Displate {
+	filtered := make([]Displate, 0, len(displates))
+	for _, d := range displates {
+		if filterFunc(d) {
+			filtered = append(filtered, d)
+		}
 	}
 
-	bodyBytes, err := io.ReadAll(response.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var limitedEditionResponse LimitedEditionResponse
-	err = json.Unmarshal(bodyBytes, &limitedEditionResponse)
-	if err != nil {
-		return nil, err
-	}
-
-	return limitedEditionResponse.Data, nil
+	return filtered
 }

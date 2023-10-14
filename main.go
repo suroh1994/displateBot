@@ -1,60 +1,95 @@
 package main
 
 import (
-	"displateBot/displateApi"
+	"context"
+	"displateBot/backend"
+	"displateBot/displate"
 	"displateBot/telegram"
-	"fmt"
+	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
+	"log/slog"
 	"os"
-	"time"
+	"os/signal"
 )
 
 const (
-	BotTokenEnvKey = "TELEGRAM_BOT_TOKEN"
+	botTokenEnvKey = "TELEGRAM_BOT_TOKEN"
 )
 
 var botToken string
 
 func init() {
-	botToken = os.Getenv(BotTokenEnvKey)
+	botToken = os.Getenv(botTokenEnvKey)
 }
 
 func main() {
-	backend := displateApi.NewBackend()
-	fetcher := displateApi.NewFetcher()
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	chTerminate := make(chan int)
-	go periodicallyUpdateDatabase(fetcher, backend, chTerminate)
+	displateClient := displate.NewClient(logger.With("component", "displateClient"))
 
-	bot := telegram.NewBot(botToken, backend, chTerminate)
-	go bot.Serve()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	store := backend.NewStore(logger.With("component", "backend"))
+	go store.UpdateDatabase(displateClient, ctx)
+
+	b, err := telegram.NewClient(botToken, logger.With("component", "telegramBot"), handleMessage(store))
+	if err != nil {
+		logger.Error("failed to initialize telegram client", "err", err)
+		return
+	}
+	go b.Serve(ctx)
 
 	// ToDo implement graceful shutdown
 	select {}
 }
 
-// ToDo move to store/backend?
-func periodicallyUpdateDatabase(fetcher displateApi.Fetcher, db displateApi.Database, chTerminate chan int) {
-	ticker := time.NewTicker(time.Second * 5)
-
-	for {
-		select {
-		case tick := <-ticker.C:
-			fmt.Printf("fetching at %s\n", tick.Format(time.RFC3339))
-
-			// fetch data
-			displates, err := fetcher.GetLimitedEditionDisplates()
-			if err != nil {
-				fmt.Printf("failed to get displates: %v\n", err)
-				continue
+func handleMessage(be backend.Store) func(context.Context, *bot.Bot, *models.Update) {
+	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
+		// TODO add logging
+		switch update.Message.Text {
+		case "/available":
+			photos := make([]models.InputMedia, 0)
+			for _, availableDisplate := range be.AvailableDisplates() {
+				photo := models.InputMediaPhoto{
+					Media:   availableDisplate.Images.Main.URL,
+					Caption: availableDisplate.Title,
+				}
+				photos = append(photos, &photo)
 			}
-			// write to db
-			err = db.StoreDisplates(displates)
-			if err != nil {
-				fmt.Printf("failed to store displates: %v\n", err)
-				continue
+			b.SendMediaGroup(ctx, &bot.SendMediaGroupParams{
+				ChatID:              update.Message.Chat.ID,
+				Media:               photos,
+				DisableNotification: false,
+				ProtectContent:      false,
+			})
+		case "/upcoming":
+			photos := make([]models.InputMedia, 0)
+			for _, availableDisplate := range be.UpcomingDisplates() {
+				photo := models.InputMediaPhoto{
+					Media:   availableDisplate.Images.Main.URL,
+					Caption: availableDisplate.Title,
+				}
+				photos = append(photos, &photo)
 			}
-		case <-chTerminate:
-			return
+			b.SendMediaGroup(ctx, &bot.SendMediaGroupParams{
+				ChatID:              update.Message.Chat.ID,
+				Media:               photos,
+				DisableNotification: false,
+				ProtectContent:      false,
+			})
+		case "/help":
+			b.SendMessage(ctx, &bot.SendMessageParams{
+				ChatID: update.Message.Chat.ID,
+				Text:   "This bot currently supports two commands: /available and /upcoming.",
+			})
+		default:
+			// TODO log error message? or return a help message?
+			b.SendMessage(ctx, &bot.SendMessageParams{
+				ChatID: update.Message.Chat.ID,
+				Text:   "Sorry, I don't know how to handle this message. Please try /help for a list of valid messages.",
+			})
+
 		}
 	}
 }
