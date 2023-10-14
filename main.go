@@ -5,11 +5,12 @@ import (
 	"displateBot/backend"
 	"displateBot/displate"
 	"displateBot/telegram"
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
 	"log/slog"
 	"os"
 	"os/signal"
+
+	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 const (
@@ -41,7 +42,12 @@ func main() {
 	go b.Serve(ctx)
 
 	// ToDo implement graceful shutdown
-	select {}
+	sigchan := make(chan os.Signal)
+	signal.Notify(sigchan, os.Interrupt)
+	select {
+	case <-sigchan:
+		return
+	}
 }
 
 func handleMessage(be backend.Store) func(context.Context, *bot.Bot, *models.Update) {
