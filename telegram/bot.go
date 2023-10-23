@@ -7,6 +7,8 @@ import (
 	"log/slog"
 )
 
+const MaxNumResultsPerQueryResponse = 50
+
 type Client struct {
 	bot    *bot.Bot
 	logger *slog.Logger
