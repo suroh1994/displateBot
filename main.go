@@ -57,6 +57,9 @@ func handleMessage(be backend.Store) func(context.Context, *bot.Bot, *models.Upd
 	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
 		// TODO add logging
 		if update.Message != nil {
+			var err error
+			var message *models.Message
+			var messages []*models.Message
 			switch update.Message.Text {
 			case "/available":
 				photos := make([]models.InputMedia, 0)
@@ -67,7 +70,7 @@ func handleMessage(be backend.Store) func(context.Context, *bot.Bot, *models.Upd
 					}
 					photos = append(photos, &photo)
 				}
-				b.SendMediaGroup(ctx, &bot.SendMediaGroupParams{
+				messages, err = b.SendMediaGroup(ctx, &bot.SendMediaGroupParams{
 					ChatID:              update.Message.Chat.ID,
 					Media:               photos,
 					DisableNotification: false,
@@ -82,24 +85,31 @@ func handleMessage(be backend.Store) func(context.Context, *bot.Bot, *models.Upd
 					}
 					photos = append(photos, &photo)
 				}
-				b.SendMediaGroup(ctx, &bot.SendMediaGroupParams{
+				messages, err = b.SendMediaGroup(ctx, &bot.SendMediaGroupParams{
 					ChatID:              update.Message.Chat.ID,
 					Media:               photos,
 					DisableNotification: false,
 					ProtectContent:      false,
 				})
 			case "/help":
-				b.SendMessage(ctx, &bot.SendMessageParams{
+				message, err = b.SendMessage(ctx, &bot.SendMessageParams{
 					ChatID: update.Message.Chat.ID,
 					Text:   "This bot currently supports two commands: /available and /upcoming.",
 				})
+				messages = append(messages, message)
 			default:
 				// TODO log error message? or return a help message?
-				b.SendMessage(ctx, &bot.SendMessageParams{
+				message, err = b.SendMessage(ctx, &bot.SendMessageParams{
 					ChatID: update.Message.Chat.ID,
 					Text:   "Sorry, I don't know how to handle this message. Please try /help for a list of valid messages.",
 				})
+				messages = append(messages, message)
 			}
+
+			logger.
+				With("messages", messages).
+				With("error", err).
+				Debug("responded to message")
 		} else if update.InlineQuery != nil {
 			startOffset, err := strconv.Atoi(update.InlineQuery.Offset)
 			if err != nil {
