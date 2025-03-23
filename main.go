@@ -5,29 +5,26 @@ import (
 	"displateBot/backend"
 	"displateBot/displate"
 	"displateBot/telegram"
+	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 	"log/slog"
 	"os"
 	"os/signal"
-	"strconv"
-	"strings"
-
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
 )
 
 const (
-	botTokenEnvKey = "TELEGRAM_BOT_TOKEN"
+	botTokenEnvKey           = "TELEGRAM_BOT_TOKEN"
+	maxMediaMessageBatchSize = 10
 )
 
 var botToken string
-var logger *slog.Logger
 
 func init() {
 	botToken = os.Getenv(botTokenEnvKey)
 }
 
 func main() {
-	logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	displateClient := displate.NewClient(logger.With("component", "displateClient"))
 
@@ -37,7 +34,7 @@ func main() {
 	store := backend.NewStore(logger.With("component", "backend"))
 	go store.UpdateDatabase(displateClient, ctx)
 
-	b, err := telegram.NewClient(botToken, logger.With("component", "telegramBot"), handleMessage(store))
+	b, err := telegram.NewClient(botToken, logger.With("component", "telegramBot"), handleMessage(store, logger))
 	if err != nil {
 		logger.Error("failed to initialize telegram client", "err", err)
 		return
@@ -53,13 +50,10 @@ func main() {
 	}
 }
 
-func handleMessage(be backend.Store) func(context.Context, *bot.Bot, *models.Update) {
+func handleMessage(be backend.Store, logger *slog.Logger) func(context.Context, *bot.Bot, *models.Update) {
 	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
 		// TODO add logging
 		if update.Message != nil {
-			var err error
-			var message *models.Message
-			var messages []*models.Message
 			switch update.Message.Text {
 			case "/available":
 				photos := make([]models.InputMedia, 0)
@@ -70,12 +64,7 @@ func handleMessage(be backend.Store) func(context.Context, *bot.Bot, *models.Upd
 					}
 					photos = append(photos, &photo)
 				}
-				messages, err = b.SendMediaGroup(ctx, &bot.SendMediaGroupParams{
-					ChatID:              update.Message.Chat.ID,
-					Media:               photos,
-					DisableNotification: false,
-					ProtectContent:      false,
-				})
+				sendAsBatches(ctx, b, update, photos, logger)
 			case "/upcoming":
 				photos := make([]models.InputMedia, 0)
 				for _, availableDisplate := range be.UpcomingDisplates() {
@@ -85,31 +74,25 @@ func handleMessage(be backend.Store) func(context.Context, *bot.Bot, *models.Upd
 					}
 					photos = append(photos, &photo)
 				}
-				messages, err = b.SendMediaGroup(ctx, &bot.SendMediaGroupParams{
+				b.SendMediaGroup(ctx, &bot.SendMediaGroupParams{
 					ChatID:              update.Message.Chat.ID,
 					Media:               photos,
 					DisableNotification: false,
 					ProtectContent:      false,
 				})
 			case "/help":
-				message, err = b.SendMessage(ctx, &bot.SendMessageParams{
+				b.SendMessage(ctx, &bot.SendMessageParams{
 					ChatID: update.Message.Chat.ID,
 					Text:   "This bot currently supports two commands: /available and /upcoming.",
 				})
-				messages = append(messages, message)
 			default:
 				// TODO log error message? or return a help message?
-				message, err = b.SendMessage(ctx, &bot.SendMessageParams{
+				b.SendMessage(ctx, &bot.SendMessageParams{
 					ChatID: update.Message.Chat.ID,
 					Text:   "Sorry, I don't know how to handle this message. Please try /help for a list of valid messages.",
 				})
-				messages = append(messages, message)
-			}
 
-			logger.
-				With("messages", messages).
-				With("error", err).
-				Debug("responded to message")
+			}
 		} else if update.InlineQuery != nil {
 			startOffset, err := strconv.Atoi(update.InlineQuery.Offset)
 			if err != nil {
@@ -153,6 +136,23 @@ func handleMessage(be backend.Store) func(context.Context, *bot.Bot, *models.Upd
 				With("response", inlineQueryResponse).
 				With("error", err).
 				Debug("responded to inline query")
+		}
+	}
+}
+
+func sendAsBatches(ctx context.Context, b *bot.Bot, update *models.Update, photos []models.InputMedia, logger *slog.Logger) {
+	for i := 0; i <= len(photos)/maxMediaMessageBatchSize; i++ {
+		batchStart := i * maxMediaMessageBatchSize
+		batchEnd := min(len(photos), (i+1)*maxMediaMessageBatchSize)
+
+		_, err := b.SendMediaGroup(ctx, &bot.SendMediaGroupParams{
+			ChatID:              update.Message.Chat.ID,
+			Media:               photos[batchStart:batchEnd],
+			DisableNotification: false,
+			ProtectContent:      false,
+		})
+		if err != nil {
+			logger.With("err", err).Error("failed to send /available message")
 		}
 	}
 }
