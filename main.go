@@ -10,11 +10,12 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 )
 
 const (
-	botTokenEnvKey           = "TELEGRAM_BOT_TOKEN"
-	maxMediaMessageBatchSize = 10
+	botTokenEnvKey = "TELEGRAM_BOT_TOKEN"
 )
 
 var botToken string
@@ -110,7 +111,9 @@ func handleMessage(be backend.Store, logger *slog.Logger) func(context.Context, 
 			// this limits the number of results returned to 50, as expected by the telegram API
 			endOffset := min(startOffset+telegram.MaxNumResultsPerQueryResponse, len(displates))
 			for _, d := range displates[startOffset:endOffset] {
-				if strings.Contains(d.Title, update.InlineQuery.Query) {
+				lowercaseTitle := strings.ToLower(d.Title)
+				lowercaseQuery := strings.ToLower(update.InlineQuery.Query)
+				if strings.Contains(lowercaseTitle, lowercaseQuery) {
 					matches = append(matches, d)
 				}
 			}
@@ -141,9 +144,9 @@ func handleMessage(be backend.Store, logger *slog.Logger) func(context.Context, 
 }
 
 func sendAsBatches(ctx context.Context, b *bot.Bot, update *models.Update, photos []models.InputMedia, logger *slog.Logger) {
-	for i := 0; i <= len(photos)/maxMediaMessageBatchSize; i++ {
-		batchStart := i * maxMediaMessageBatchSize
-		batchEnd := min(len(photos), (i+1)*maxMediaMessageBatchSize)
+	for i := 0; i <= len(photos)/telegram.MaxMediaMessageBatchSize; i++ {
+		batchStart := i * telegram.MaxMediaMessageBatchSize
+		batchEnd := min(len(photos), (i+1)*telegram.MaxMediaMessageBatchSize)
 
 		_, err := b.SendMediaGroup(ctx, &bot.SendMediaGroupParams{
 			ChatID:              update.Message.Chat.ID,

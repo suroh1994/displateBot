@@ -7,7 +7,10 @@ import (
 	"log/slog"
 )
 
-const MaxNumResultsPerQueryResponse = 50
+const (
+	MaxNumResultsPerQueryResponse = 50
+	MaxMediaMessageBatchSize      = 10
+)
 
 type Client struct {
 	bot    *bot.Bot
