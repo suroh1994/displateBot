@@ -12,17 +12,25 @@ type Client interface {
 }
 
 type client struct {
-	logger *slog.Logger
+	logger     *slog.Logger
+	httpClient *http.Client
 }
 
 func NewClient(logger *slog.Logger) Client {
 	return &client{
-		logger: logger,
+		logger:     logger,
+		httpClient: &http.Client{},
 	}
 }
 
 func (c *client) GetLimitedEditionDisplates() ([]Displate, error) {
-	response, err := http.Get("https://sapi.displate.com/artworks/limited?miso=DE")
+	request, err := http.NewRequest(http.MethodGet, "https://sapi.displate.com/artworks/limited", nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Add("user-agent", "https://t.me/displatebot")
+
+	response, err := c.httpClient.Do(request)
 	if err != nil {
 		return nil, err
 	}

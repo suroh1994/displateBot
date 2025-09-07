@@ -5,13 +5,14 @@ import (
 	"displateBot/backend"
 	"displateBot/displate"
 	"displateBot/telegram"
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
 	"log/slog"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
+
+	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 const (
