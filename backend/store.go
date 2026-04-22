@@ -14,6 +14,7 @@ type Store interface {
 	AvailableDisplates() []displate.Displate
 	UpcomingDisplates() []displate.Displate
 	AddChat(int64)
+	RemoveChat(int64)
 	Chats() []int64
 }
 
@@ -48,6 +49,12 @@ func (s *store) AddChat(chatID int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.chats[chatID] = struct{}{}
+}
+
+func (s *store) RemoveChat(chatID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.chats, chatID)
 }
 
 func (s *store) Chats() []int64 {

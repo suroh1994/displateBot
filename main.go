@@ -86,8 +86,19 @@ func main() {
 func handleMessage(be backend.Store, logger *slog.Logger) func(context.Context, *bot.Bot, *models.Update) {
 	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
 		if update.Message != nil {
-			be.AddChat(update.Message.Chat.ID)
 			switch update.Message.Text {
+			case "/sub":
+				be.AddChat(update.Message.Chat.ID)
+				b.SendMessage(ctx, &bot.SendMessageParams{
+					ChatID: update.Message.Chat.ID,
+					Text:   "You have been subscribed to notifications for new Limited Edition Displates.",
+				})
+			case "/stop":
+				be.RemoveChat(update.Message.Chat.ID)
+				b.SendMessage(ctx, &bot.SendMessageParams{
+					ChatID: update.Message.Chat.ID,
+					Text:   "You have been unsubscribed from notifications.",
+				})
 			case "/available":
 				photos := make([]models.InputMedia, 0)
 				for _, availableDisplate := range be.AvailableDisplates() {
@@ -116,7 +127,7 @@ func handleMessage(be backend.Store, logger *slog.Logger) func(context.Context, 
 			case "/help":
 				b.SendMessage(ctx, &bot.SendMessageParams{
 					ChatID: update.Message.Chat.ID,
-					Text:   "This bot currently supports two commands: /available and /upcoming. It will also notify you when new Limited Edition Displates are released.",
+					Text:   "This bot currently supports the following commands:\n/available - Show available Limited Edition Displates\n/upcoming - Show upcoming Limited Edition Displates\n/sub - Subscribe to notifications for new Limited Edition Displates\n/stop - Unsubscribe from notifications\n/help - Show this help message",
 				})
 			default:
 				// TODO log error message? or return a help message?
