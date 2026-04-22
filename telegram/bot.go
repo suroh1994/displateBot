@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 	"log/slog"
 )
 
@@ -35,4 +36,24 @@ func NewClient(token string, logger *slog.Logger, handlerFunc bot.HandlerFunc) (
 
 func (c *Client) Serve(ctx context.Context) {
 	c.bot.Start(ctx)
+}
+
+func (c *Client) SendMessage(ctx context.Context, chatID int64, text string) {
+	_, err := c.bot.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID: chatID,
+		Text:   text,
+	})
+	if err != nil {
+		c.logger.Error("failed to send message", "chatID", chatID, "err", err)
+	}
+}
+
+func (c *Client) SendMediaGroup(ctx context.Context, chatID int64, photos []models.InputMedia) {
+	_, err := c.bot.SendMediaGroup(ctx, &bot.SendMediaGroupParams{
+		ChatID: chatID,
+		Media:  photos,
+	})
+	if err != nil {
+		c.logger.Error("failed to send media group", "chatID", chatID, "err", err)
+	}
 }

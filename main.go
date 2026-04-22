@@ -5,24 +5,40 @@ import (
 	"displateBot/backend"
 	"displateBot/displate"
 	"displateBot/telegram"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 )
 
 const (
-	botTokenEnvKey = "TELEGRAM_BOT_TOKEN"
+	botTokenEnvKey       = "TELEGRAM_BOT_TOKEN"
+	updateIntervalEnvKey = "UPDATE_INTERVAL"
+	defaultInterval      = 1 * time.Hour
 )
 
 var botToken string
+var updateInterval time.Duration
 
 func init() {
 	botToken = os.Getenv(botTokenEnvKey)
+	intervalStr := os.Getenv(updateIntervalEnvKey)
+	if intervalStr != "" {
+		var err error
+		updateInterval, err = time.ParseDuration(intervalStr)
+		if err != nil {
+			slog.Error("failed to parse update interval, using default", "interval", intervalStr, "err", err)
+			updateInterval = defaultInterval
+		}
+	} else {
+		updateInterval = defaultInterval
+	}
 }
 
 func main() {
@@ -34,28 +50,43 @@ func main() {
 	defer cancel()
 
 	store := backend.NewStore(logger.With("component", "backend"))
-	go store.UpdateDatabase(displateClient, ctx)
 
-	b, err := telegram.NewClient(botToken, logger.With("component", "telegramBot"), handleMessage(store, logger))
+	var b *telegram.Client
+	var err error
+	b, err = telegram.NewClient(botToken, logger.With("component", "telegramBot"), handleMessage(store, logger))
 	if err != nil {
 		logger.Error("failed to initialize telegram client", "err", err)
 		return
 	}
+
+	onNewDisplates := func(newDisplates []displate.Displate) {
+		chats := store.Chats()
+		for _, d := range newDisplates {
+			message := fmt.Sprintf("New Limited Edition Displate found!\n\nTitle: %s\nStatus: %s\nURL: https://displate.com%s", d.Title, d.Edition.Status, d.URL)
+			for _, chatID := range chats {
+				b.SendMessage(ctx, chatID, message)
+			}
+		}
+	}
+
+	go store.UpdateDatabase(displateClient, ctx, updateInterval, onNewDisplates)
 	go b.Serve(ctx)
 
 	// ToDo implement graceful shutdown
-	sigchan := make(chan os.Signal)
+	sigchan := make(chan os.Signal, 1)
 	signal.Notify(sigchan, os.Interrupt)
 	select {
 	case <-sigchan:
+		return
+	case <-ctx.Done():
 		return
 	}
 }
 
 func handleMessage(be backend.Store, logger *slog.Logger) func(context.Context, *bot.Bot, *models.Update) {
 	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
-		// TODO add logging
 		if update.Message != nil {
+			be.AddChat(update.Message.Chat.ID)
 			switch update.Message.Text {
 			case "/available":
 				photos := make([]models.InputMedia, 0)
@@ -85,7 +116,7 @@ func handleMessage(be backend.Store, logger *slog.Logger) func(context.Context, 
 			case "/help":
 				b.SendMessage(ctx, &bot.SendMessageParams{
 					ChatID: update.Message.Chat.ID,
-					Text:   "This bot currently supports two commands: /available and /upcoming.",
+					Text:   "This bot currently supports two commands: /available and /upcoming. It will also notify you when new Limited Edition Displates are released.",
 				})
 			default:
 				// TODO log error message? or return a help message?
@@ -148,6 +179,10 @@ func sendAsBatches(ctx context.Context, b *bot.Bot, update *models.Update, photo
 	for i := 0; i <= len(photos)/telegram.MaxMediaMessageBatchSize; i++ {
 		batchStart := i * telegram.MaxMediaMessageBatchSize
 		batchEnd := min(len(photos), (i+1)*telegram.MaxMediaMessageBatchSize)
+
+		if batchStart >= len(photos) {
+			break
+		}
 
 		_, err := b.SendMediaGroup(ctx, &bot.SendMediaGroupParams{
 			ChatID:              update.Message.Chat.ID,
