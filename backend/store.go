@@ -4,14 +4,18 @@ import (
 	"context"
 	"displateBot/displate"
 	"log/slog"
+	"sync"
 	"time"
 )
 
 type Store interface {
-	UpdateDatabase(displate.Client, context.Context)
+	UpdateDatabase(displate.Client, context.Context, time.Duration, func([]displate.Displate))
 	LimitedEditionDisplates() []displate.Displate
 	AvailableDisplates() []displate.Displate
 	UpcomingDisplates() []displate.Displate
+	AddChat(int64)
+	RemoveChat(int64)
+	Chats() []int64
 }
 
 type store struct {
@@ -19,39 +23,91 @@ type store struct {
 	availableDisplates []displate.Displate
 	upcomingDisplates  []displate.Displate
 	logger             *slog.Logger
+	chats              map[int64]struct{}
+	mu                 sync.RWMutex
 }
 
 func (s *store) AvailableDisplates() []displate.Displate {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.availableDisplates
 }
 
 func (s *store) UpcomingDisplates() []displate.Displate {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.upcomingDisplates
 }
 
 func (s *store) LimitedEditionDisplates() []displate.Displate {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.displates
 }
 
-func (s *store) UpdateDatabase(client displate.Client, ctx context.Context) {
-	s.fetchDisplatesAndUpdateCache(client)
+func (s *store) AddChat(chatID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.chats[chatID] = struct{}{}
+}
+
+func (s *store) RemoveChat(chatID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.chats, chatID)
+}
+
+func (s *store) Chats() []int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	chats := make([]int64, 0, len(s.chats))
+	for chatID := range s.chats {
+		chats = append(chats, chatID)
+	}
+	return chats
+}
+
+func (s *store) UpdateDatabase(client displate.Client, ctx context.Context, interval time.Duration, onNewDisplates func([]displate.Displate)) {
+	newDisplates := s.fetchDisplatesAndUpdateCache(client)
+	if len(newDisplates) > 0 {
+		onNewDisplates(newDisplates)
+	}
 	for {
 		select {
-		//TODO Implement dynamic update interval close to releases and when sales are about to end (sell out or terminate)
-		case <-time.After(1 * time.Hour):
-			s.fetchDisplatesAndUpdateCache(client)
+		case <-time.After(interval):
+			newDisplates := s.fetchDisplatesAndUpdateCache(client)
+			if len(newDisplates) > 0 {
+				onNewDisplates(newDisplates)
+			}
 		case <-ctx.Done():
 			return
 		}
 	}
 }
 
-func (s *store) fetchDisplatesAndUpdateCache(client displate.Client) {
+func (s *store) fetchDisplatesAndUpdateCache(client displate.Client) []displate.Displate {
 	displates, err := client.GetLimitedEditionDisplates()
 	if err != nil {
-		s.logger.Error("failed to update database: failed to get displates: %v", err)
-		return
+		s.logger.Error("failed to update database: failed to get displates", "err", err)
+		return nil
 	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	newDisplates := make([]displate.Displate, 0)
+	if len(s.displates) > 0 {
+		oldDisplatesMap := make(map[int]struct{})
+		for _, d := range s.displates {
+			oldDisplatesMap[d.ID] = struct{}{}
+		}
+		for _, d := range displates {
+			if _, ok := oldDisplatesMap[d.ID]; !ok {
+				newDisplates = append(newDisplates, d)
+			}
+		}
+	}
+
 	s.displates = displates
 	s.availableDisplates = displate.FilterDisplates(s.displates, func(d displate.Displate) bool {
 		return d.Edition.Status == displate.StatusAvailable
@@ -59,11 +115,13 @@ func (s *store) fetchDisplatesAndUpdateCache(client displate.Client) {
 	s.upcomingDisplates = displate.FilterDisplates(s.displates, func(d displate.Displate) bool {
 		return d.Edition.Status == displate.StatusUpcoming
 	})
+	return newDisplates
 }
 
 func NewStore(logger *slog.Logger) Store {
 	return &store{
 		displates: make([]displate.Displate, 0),
 		logger:    logger,
+		chats:     make(map[int64]struct{}),
 	}
 }
