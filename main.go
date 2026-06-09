@@ -20,11 +20,14 @@ import (
 const (
 	botTokenEnvKey       = "TELEGRAM_BOT_TOKEN"
 	updateIntervalEnvKey = "UPDATE_INTERVAL"
+	dbPathEnvKey         = "DB_PATH"
 	defaultInterval      = 1 * time.Hour
+	defaultDBPath        = "displatebot.db"
 )
 
 var botToken string
 var updateInterval time.Duration
+var dbPath string
 
 func init() {
 	botToken = os.Getenv(botTokenEnvKey)
@@ -39,6 +42,11 @@ func init() {
 	} else {
 		updateInterval = defaultInterval
 	}
+
+	dbPath = os.Getenv(dbPathEnvKey)
+	if dbPath == "" {
+		dbPath = defaultDBPath
+	}
 }
 
 func main() {
@@ -49,10 +57,18 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	store := backend.NewStore(logger.With("component", "backend"))
+	store, err := backend.NewStore(logger.With("component", "backend"), dbPath)
+	if err != nil {
+		logger.Error("failed to initialize backend store", "err", err)
+		return
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			logger.Error("failed to close store", "err", err)
+		}
+	}()
 
 	var b *telegram.Client
-	var err error
 	b, err = telegram.NewClient(botToken, logger.With("component", "telegramBot"), handleMessage(store, logger))
 	if err != nil {
 		logger.Error("failed to initialize telegram client", "err", err)
